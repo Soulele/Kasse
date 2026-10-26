@@ -34,6 +34,8 @@ export type Sale = {
   completedAt: string;
   lines: SaleLine[];
   totalCents: number;
+  /** Set when the sale was cancelled (Storno). */
+  voidedAt?: string;
 };
 
 const PRODUCTS_KEY = 'kasse/products';
@@ -89,6 +91,7 @@ type KasseContextValue = {
   addProduct: (name: string, category: string, priceCents: number) => void;
   removeProduct: (productId: string) => void;
   completeSale: () => Sale | null;
+  voidSale: (saleId: string) => void;
   cashStart: CashStart | null;
   setCashStart: (cents: number) => void;
   todaysSales: Sale[];
@@ -222,13 +225,30 @@ export function KasseProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const voidSale = useCallback(
+    (saleId: string) => {
+      persistSales(
+        sales.map((s) =>
+          s.id === saleId && !s.voidedAt
+            ? { ...s, voidedAt: new Date().toISOString() }
+            : s,
+        ),
+      );
+    },
+    [sales, persistSales],
+  );
+
   const todaysSales = useMemo(
     () => sales.filter((s) => isToday(s.completedAt)),
     [sales],
   );
 
   const todaysTotalCents = useMemo(
-    () => todaysSales.reduce((sum, s) => sum + s.totalCents, 0),
+    () =>
+      todaysSales.reduce(
+        (sum, s) => sum + (s.voidedAt ? 0 : s.totalCents),
+        0,
+      ),
     [todaysSales],
   );
 
@@ -275,6 +295,7 @@ export function KasseProvider({ children }: { children: ReactNode }) {
       addProduct,
       removeProduct,
       completeSale,
+      voidSale,
       cashStart,
       setCashStart,
       todaysSales,
@@ -294,6 +315,7 @@ export function KasseProvider({ children }: { children: ReactNode }) {
       addProduct,
       removeProduct,
       completeSale,
+      voidSale,
       cashStart,
       setCashStart,
       todaysSales,

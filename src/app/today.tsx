@@ -1,26 +1,27 @@
 import { useState } from 'react';
 import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  useColorScheme,
+    Alert,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    TextInput,
+    useColorScheme,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import {
-  BottomTabInset,
-  Colors,
-  MaxContentWidth,
-  Spacing,
+    BottomTabInset,
+    Colors,
+    MaxContentWidth,
+    Spacing,
 } from '@/constants/theme';
 import {
-  dateKey,
-  formatEuro,
-  useKasse,
-  type Sale,
+    dateKey,
+    formatEuro,
+    useKasse,
+    type Sale,
 } from '@/lib/store';
 
 function parseEuroToCents(text: string): number | null {
@@ -30,34 +31,110 @@ function parseEuroToCents(text: string): number | null {
 }
 
 function SaleRow({ sale }: { sale: Sale }) {
+  const { voidSale } = useKasse();
   const time = new Date(sale.completedAt).toLocaleTimeString('de-DE', {
     hour: '2-digit',
     minute: '2-digit',
   });
   const itemCount = sale.lines.reduce((sum, l) => sum + l.quantity, 0);
+  const voided = !!sale.voidedAt;
+
   return (
     <ThemedView type="backgroundElement" style={styles.saleRow}>
       <ThemedView style={styles.saleRowInfo}>
-        <ThemedText type="smallBold">{time} Uhr</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
+        <ThemedText type="smallBold" style={voided && styles.voidedText}>
+          {time} Uhr{voided ? ' · STORNIERT' : ''}
+        </ThemedText>
+        <ThemedText
+          type="small"
+          themeColor="textSecondary"
+          style={voided && styles.voidedText}>
           {itemCount} {itemCount === 1 ? 'Artikel' : 'Artikel'}:{' '}
           {sale.lines.map((l) => `${l.quantity}× ${l.name}`).join(', ')}
         </ThemedText>
       </ThemedView>
-      <ThemedText type="smallBold">{formatEuro(sale.totalCents)}</ThemedText>
+      <ThemedText type="smallBold" style={voided && styles.voidedText}>
+        {formatEuro(sale.totalCents)}
+      </ThemedText>
+      {!voided && (
+        <Pressable
+          onPress={() =>
+            Alert.alert(
+              'Verkauf stornieren?',
+              `${formatEuro(sale.totalCents)} wird aus dem Tagesumsatz
+entfernt.`,
+              [
+                { text: 'Abbrechen', style: 'cancel' },
+                {
+                  text: 'Stornieren',
+                  style: 'destructive',
+                  onPress: () => voidSale(sale.id),
+                },
+              ],
+            )
+          }
+          style={styles.voidButton}
+          accessibilityLabel="Verkauf stornieren">
+          <ThemedText type="small" style={styles.voidButtonText}>
+            Storno
+          </ThemedText>
+        </Pressable>
+      )}
+    </ThemedView>
+  );
+}
+
+function DaySection({ dayKey, sales }: { dayKey: string; sales: Sale[] }) {
+  const dayTotal = sales.reduce(
+    (sum, s) => sum + (s.voidedAt ? 0 : s.totalCents),
+    0,
+  );
+  const dateLabel = new Date(`${dayKey}T12:00:00`).toLocaleDateString('de-DE', {
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+  });
+  return (
+    <ThemedView style={styles.daySection}>
+      <ThemedView style={styles.dayHeader}>
+        <ThemedText type="smallBold" themeColor="textSecondary">
+          {dateLabel.toUpperCase()}
+        </ThemedText>
+        <ThemedText type="smallBold" themeColor="textSecondary">
+          {formatEuro(dayTotal)}
+        </ThemedText>
+      </ThemedView>
+      {sales.map((sale) => (
+        <SaleRow key={sale.id} sale={sale} />
+      ))}
     </ThemedView>
   );
 }
 
 export default function TodayScreen() {
-  const { cashStart, setCashStart, todaysSales, todaysTotalCents } =
-    useKasse();
+  const {
+    cashStart,
+    setCashStart,
+    sales,
+    todaysSales,
+    todaysTotalCents,
+  } = useKasse();
   const scheme = useColorScheme();
   const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
   const [editingCash, setEditingCash] = useState(false);
   const [cashText, setCashText] = useState('');
 
-  const startIsToday = cashStart?.date === dateKey(new Date());
+  const todayKey = dateKey(new Date());
+  const startIsToday = cashStart?.date === todayKey;
+  const todaySalesActive = todaysSales.filter((s) => !s.voidedAt);
+
+  const pastDays = [...new Set(
+    sales
+      .filter((s) => dateKey(new Date(s.completedAt)) !== todayKey)
+      .map((s) => dateKey(new Date(s.completedAt))),
+  )]
+    .sort()
+    .reverse();
   const startCents = startIsToday ? cashStart.cents : null;
   const expectedCashCents =
     startCents !== null ? startCents + todaysTotalCents : null;
@@ -135,8 +212,8 @@ export default function TodayScreen() {
               {formatEuro(todaysTotalCents)}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              {todaysSales.length}{' '}
-              {todaysSales.length === 1 ? 'Verkauf' : 'Verkäufe'}
+              {todaySalesActive.length}{' '}
+              {todaySalesActive.length === 1 ? 'Verkauf' : 'Verkäufe'}
             </ThemedText>
           </ThemedView>
 
@@ -168,6 +245,28 @@ export default function TodayScreen() {
             [...todaysSales]
               .reverse()
               .map((sale) => <SaleRow key={sale.id} sale={sale} />)
+          )}
+
+          {pastDays.length > 0 && (
+            <>
+              <ThemedText
+                type="smallBold"
+                themeColor="textSecondary"
+                style={styles.salesTitle}>
+                VERGANGENE TAGE
+              </ThemedText>
+              {pastDays.map((dayKey) => (
+                <DaySection
+                  key={dayKey}
+                  dayKey={dayKey}
+                  sales={sales
+                    .filter(
+                      (s) => dateKey(new Date(s.completedAt)) === dayKey,
+                    )
+                    .reverse()}
+                />
+              ))}
+            </>
           )}
         </ScrollView>
       </SafeAreaView>
@@ -244,5 +343,28 @@ const styles = StyleSheet.create({
   saleRowInfo: {
     flex: 1,
     gap: Spacing.half,
+  },
+  voidedText: {
+    textDecorationLine: 'line-through',
+    opacity: 0.5,
+  },
+  voidButton: {
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.two,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: '#E03131',
+  },
+  voidButtonText: {
+    color: '#E03131',
+  },
+  daySection: {
+    gap: Spacing.two,
+  },
+  dayHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: Spacing.two,
   },
 });
