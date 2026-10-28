@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import {
-    Alert,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -11,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Spacing } from '@/constants/theme';
+import { confirmDialog } from '@/lib/confirm';
 import {
     formatEuro,
     useKasse,
@@ -53,8 +53,12 @@ function OrderLineRow({
   line: OrderLine;
   product: Product;
 }) {
-  const { changeQuantity, removeFromOrder } = useKasse();
-  const lineTotal = product.priceCents * line.quantity;
+  const { changeQuantity, removeFromOrder, staffMode } = useKasse();
+  const unitPrice =
+    staffMode && product.staffPriceCents != null
+      ? product.staffPriceCents
+      : product.priceCents;
+  const lineTotal = unitPrice * line.quantity;
   return (
     <ThemedView type="background" style={styles.orderLine}>
       <ThemedView style={styles.orderLineInfo}>
@@ -62,8 +66,9 @@ function OrderLineRow({
           {product.name}
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          {line.quantity} × {formatEuro(product.priceCents)} ={' '}
+          {line.quantity} × {formatEuro(unitPrice)} ={' '}
           {formatEuro(lineTotal)}
+          {staffMode && product.staffPriceCents == null && ' (Normalpreis)'}
         </ThemedText>
       </ThemedView>
       <ThemedView style={styles.orderLineActions}>
@@ -100,8 +105,16 @@ function OrderLineRow({
 }
 
 export default function KasseScreen() {
-  const { products, order, totalCents, addToOrder, clearOrder, completeSale } =
-    useKasse();
+  const {
+    products,
+    order,
+    totalCents,
+    addToOrder,
+    clearOrder,
+    completeSale,
+    staffMode,
+    setStaffMode,
+  } = useKasse();
   const { width } = useWindowDimensions();
   const [lastSaleTotal, setLastSaleTotal] = useState<number | null>(null);
 
@@ -122,20 +135,36 @@ export default function KasseScreen() {
     .map((line) => ({ line, product: productById.get(line.productId) }))
     .filter((x): x is { line: OrderLine; product: Product } => !!x.product);
 
+  const handleStaffToggle = () => {
+    if (staffMode) {
+      setStaffMode(false);
+      return;
+    }
+    const missing = orderLines
+      .filter(({ product }) => product.staffPriceCents == null)
+      .map(({ product }) => product.name);
+    if (missing.length === 0) {
+      setStaffMode(true);
+      return;
+    }
+    confirmDialog(
+      'Mitarbeiterpreis fehlt',
+      `Für ${missing.join(', ')} ist kein Mitarbeiterpreis hinterlegt. ` +
+        'Diese Artikel werden zum Normalpreis berechnet.',
+      () => setStaffMode(true),
+      'Trotzdem weiter',
+    );
+  };
+
   const handleCheckout = () => {
-    Alert.alert(
+    confirmDialog(
       'Verkauf abschließen?',
       `Gesamtbetrag: ${formatEuro(totalCents)}`,
-      [
-        { text: 'Abbrechen', style: 'cancel' },
-        {
-          text: 'Abschließen',
-          onPress: () => {
-            const sale = completeSale();
-            if (sale) setLastSaleTotal(sale.totalCents);
-          },
-        },
-      ],
+      () => {
+        const sale = completeSale();
+        if (sale) setLastSaleTotal(sale.totalCents);
+      },
+      'Abschließen',
     );
   };
 
@@ -162,8 +191,29 @@ export default function KasseScreen() {
         </ThemedText>
       )}
 
+      <Pressable
+        onPress={handleStaffToggle}
+        disabled={order.length === 0}
+        style={[
+          styles.staffButton,
+          staffMode && styles.staffButtonActive,
+          order.length === 0 && styles.disabled,
+        ]}
+        accessibilityLabel="Mitarbeiterpreise umschalten">
+        <ThemedText
+          type="smallBold"
+          style={[
+            styles.staffButtonText,
+            staffMode && styles.staffButtonTextActive,
+          ]}>
+          {staffMode ? 'Mitarbeiterpreise: AN' : 'Mitarbeiter'}
+        </ThemedText>
+      </Pressable>
+
       <ThemedView style={styles.totalRow}>
-        <ThemedText type="subtitle">Summe</ThemedText>
+        <ThemedText type="subtitle">
+          {staffMode ? 'Summe (MA)' : 'Summe'}
+        </ThemedText>
         <ThemedText type="title" style={styles.totalText}>
           {formatEuro(totalCents)}
         </ThemedText>
@@ -352,6 +402,23 @@ const styles = StyleSheet.create({
   },
   removeButtonText: {
     color: '#E8590C',
+  },
+  staffButton: {
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: '#1971C2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  staffButtonActive: {
+    backgroundColor: '#1971C2',
+  },
+  staffButtonText: {
+    color: '#1971C2',
+  },
+  staffButtonTextActive: {
+    color: '#FFFFFF',
   },
   totalRow: {
     flexDirection: 'row',

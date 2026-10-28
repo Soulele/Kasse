@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-    Alert,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -17,6 +16,7 @@ import {
     MaxContentWidth,
     Spacing,
 } from '@/constants/theme';
+import { confirmDialog } from '@/lib/confirm';
 import {
     dateKey,
     formatEuro,
@@ -43,7 +43,8 @@ function SaleRow({ sale }: { sale: Sale }) {
     <ThemedView type="backgroundElement" style={styles.saleRow}>
       <ThemedView style={styles.saleRowInfo}>
         <ThemedText type="smallBold" style={voided && styles.voidedText}>
-          {time} Uhr{voided ? ' · STORNIERT' : ''}
+          {time} Uhr{sale.staffSale ? ' · MA' : ''}
+          {voided ? ' · STORNIERT' : ''}
         </ThemedText>
         <ThemedText
           type="small"
@@ -59,18 +60,13 @@ function SaleRow({ sale }: { sale: Sale }) {
       {!voided && (
         <Pressable
           onPress={() =>
-            Alert.alert(
+            confirmDialog(
               'Verkauf stornieren?',
               `${formatEuro(sale.totalCents)} wird aus dem Tagesumsatz
 entfernt.`,
-              [
-                { text: 'Abbrechen', style: 'cancel' },
-                {
-                  text: 'Stornieren',
-                  style: 'destructive',
-                  onPress: () => voidSale(sale.id),
-                },
-              ],
+              () => voidSale(sale.id),
+              'Stornieren',
+              true,
             )
           }
           style={styles.voidButton}
