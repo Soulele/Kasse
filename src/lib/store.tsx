@@ -15,6 +15,8 @@ export type Product = {
   name: string;
   category: string;
   priceCents: number;
+  /** Optional employee price; absent means "no staff price set". */
+  staffPriceCents?: number;
 };
 
 export type OrderLine = {
@@ -34,6 +36,8 @@ export type Sale = {
   completedAt: string;
   lines: SaleLine[];
   totalCents: number;
+  /** True if the sale used employee prices. */
+  staffSale?: boolean;
   /** Set when the sale was cancelled (Storno). */
   voidedAt?: string;
 };
@@ -61,8 +65,20 @@ export function isToday(iso: string): boolean {
 }
 
 export const DEFAULT_PRODUCTS: Product[] = [
-  { id: 'pommes', name: 'Pommes', category: 'Essen', priceCents: 300 },
-  { id: 'currywurst', name: 'Currywurst', category: 'Essen', priceCents: 350 },
+  {
+    id: 'pommes',
+    name: 'Pommes',
+    category: 'Essen',
+    priceCents: 300,
+    staffPriceCents: 150,
+  },
+  {
+    id: 'currywurst',
+    name: 'Currywurst',
+    category: 'Essen',
+    priceCents: 350,
+    staffPriceCents: 200,
+  },
   { id: 'burger', name: 'Burger', category: 'Essen', priceCents: 500 },
   { id: 'bratwurst', name: 'Bratwurst', category: 'Essen', priceCents: 320 },
   { id: 'cola', name: 'Cola', category: 'Getränke', priceCents: 250 },
@@ -88,6 +104,12 @@ type KasseContextValue = {
   removeFromOrder: (productId: string) => void;
   clearOrder: () => void;
   updatePrice: (productId: string, priceCents: number) => void;
+  updateStaffPrice: (
+    productId: string,
+    priceCents: number | null,
+  ) => void;
+  staffMode: boolean;
+  setStaffMode: (on: boolean) => void;
   addProduct: (name: string, category: string, priceCents: number) => void;
   removeProduct: (productId: string) => void;
   completeSale: () => Sale | null;
@@ -105,6 +127,7 @@ export function KasseProvider({ children }: { children: ReactNode }) {
   const [order, setOrder] = useState<OrderLine[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [cashStart, setCashStartState] = useState<CashStart | null>(null);
+  const [staffMode, setStaffMode] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -168,12 +191,30 @@ export function KasseProvider({ children }: { children: ReactNode }) {
     setOrder((prev) => prev.filter((l) => l.productId !== productId));
   }, []);
 
-  const clearOrder = useCallback(() => setOrder([]), []);
+  const clearOrder = useCallback(() => {
+    setOrder([]);
+    setStaffMode(false);
+  }, []);
 
   const updatePrice = useCallback(
     (productId: string, priceCents: number) => {
       persistProducts(
         products.map((p) => (p.id === productId ? { ...p, priceCents } : p)),
+      );
+    },
+    [products, persistProducts],
+  );
+
+  const updateStaffPrice = useCallback(
+    (productId: string, priceCents: number | null) => {
+      persistProducts(
+        products.map((p) =>
+          p.id === productId
+            ? priceCents === null
+              ? { ...p, staffPriceCents: undefined }
+              : { ...p, staffPriceCents: priceCents }
+            : p,
+        ),
       );
     },
     [products, persistProducts],
@@ -203,18 +244,23 @@ export function KasseProvider({ children }: { children: ReactNode }) {
     [products, persistProducts],
   );
 
-  const priceById = useMemo(
-    () => new Map(products.map((p) => [p.id, p.priceCents])),
+  const productById = useMemo(
+    () => new Map(products.map((p) => [p.id, p])),
     [products],
   );
 
   const totalCents = useMemo(
     () =>
-      order.reduce(
-        (sum, l) => sum + (priceById.get(l.productId) ?? 0) * l.quantity,
-        0,
-      ),
-    [order, priceById],
+      order.reduce((sum, l) => {
+        const p = productById.get(l.productId);
+        if (!p) return sum;
+        const unit =
+          staffMode && p.staffPriceCents != null
+            ? p.staffPriceCents
+            : p.priceCents;
+        return sum + unit * l.quantity;
+      }, 0),
+    [order, productById, staffMode],
   );
 
   const setCashStart = useCallback((cents: number) => {
@@ -258,10 +304,14 @@ export function KasseProvider({ children }: { children: ReactNode }) {
       .map((l) => {
         const product = products.find((p) => p.id === l.productId);
         if (!product) return null;
+        const unitPriceCents =
+          staffMode && product.staffPriceCents != null
+            ? product.staffPriceCents
+            : product.priceCents;
         return {
           productId: product.id,
           name: product.name,
-          unitPriceCents: product.priceCents,
+          unitPriceCents,
           quantity: l.quantity,
         };
       })
@@ -270,6 +320,7 @@ export function KasseProvider({ children }: { children: ReactNode }) {
       id: `${Date.now()}`,
       completedAt: new Date().toISOString(),
       lines,
+      staffSale: staffMode,
       totalCents: lines.reduce(
         (sum, l) => sum + l.unitPriceCents * l.quantity,
         0,
@@ -277,8 +328,9 @@ export function KasseProvider({ children }: { children: ReactNode }) {
     };
     persistSales([...sales, sale]);
     setOrder([]);
+    setStaffMode(false);
     return sale;
-  }, [order, products, sales, persistSales]);
+  }, [order, products, sales, persistSales, staffMode]);
 
   const value = useMemo(
     () => ({
@@ -292,6 +344,9 @@ export function KasseProvider({ children }: { children: ReactNode }) {
       removeFromOrder,
       clearOrder,
       updatePrice,
+      updateStaffPrice,
+      staffMode,
+      setStaffMode,
       addProduct,
       removeProduct,
       completeSale,
@@ -312,6 +367,9 @@ export function KasseProvider({ children }: { children: ReactNode }) {
       removeFromOrder,
       clearOrder,
       updatePrice,
+      updateStaffPrice,
+      staffMode,
+      setStaffMode,
       addProduct,
       removeProduct,
       completeSale,

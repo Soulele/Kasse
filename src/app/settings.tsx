@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-    Alert,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -17,6 +16,7 @@ import {
     MaxContentWidth,
     Spacing,
 } from '@/constants/theme';
+import { alertMessage, confirmDialog } from '@/lib/confirm';
 import { formatEuro, useKasse, type Product } from '@/lib/store';
 
 function parseEuroToCents(text: string): number | null {
@@ -30,11 +30,15 @@ function centsToInput(cents: number): string {
 }
 
 function PriceRow({ product }: { product: Product }) {
-  const { updatePrice, removeProduct } = useKasse();
+  const { updatePrice, updateStaffPrice, removeProduct } = useKasse();
   const scheme = useColorScheme();
   const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
   const [text, setText] = useState(centsToInput(product.priceCents));
   const [invalid, setInvalid] = useState(false);
+  const [staffText, setStaffText] = useState(
+    product.staffPriceCents != null ? centsToInput(product.staffPriceCents) : '',
+  );
+  const [staffInvalid, setStaffInvalid] = useState(false);
 
   const handleEndEditing = () => {
     const cents = parseEuroToCents(text);
@@ -48,50 +52,110 @@ function PriceRow({ product }: { product: Product }) {
     if (cents !== product.priceCents) updatePrice(product.id, cents);
   };
 
+  const handleStaffEndEditing = () => {
+    if (staffText.trim() === '') {
+      setStaffInvalid(false);
+      setStaffText('');
+      if (product.staffPriceCents != null) {
+        updateStaffPrice(product.id, null);
+      }
+      return;
+    }
+    const cents = parseEuroToCents(staffText);
+    if (cents === null) {
+      setStaffInvalid(true);
+      setStaffText(
+        product.staffPriceCents != null
+          ? centsToInput(product.staffPriceCents)
+          : '',
+      );
+      return;
+    }
+    setStaffInvalid(false);
+    setStaffText(centsToInput(cents));
+    if (cents !== product.staffPriceCents) {
+      updateStaffPrice(product.id, cents);
+    }
+  };
+
   return (
     <ThemedView type="backgroundElement" style={styles.row}>
       <ThemedView style={styles.rowInfo}>
         <ThemedText type="smallBold">{product.name}</ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
           {product.category} · aktuell {formatEuro(product.priceCents)}
+          {product.staffPriceCents != null &&
+            ` · MA ${formatEuro(product.staffPriceCents)}`}
         </ThemedText>
       </ThemedView>
-      <ThemedView style={styles.inputWrap}>
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          onEndEditing={handleEndEditing}
-          onBlur={handleEndEditing}
-          keyboardType="decimal-pad"
-          inputMode="decimal"
-          selectTextOnFocus
-          accessibilityLabel={`Preis für ${product.name}`}
-          style={[
-            styles.input,
-            {
-              color: colors.text,
-              borderColor: invalid ? '#E03131' : colors.backgroundSelected,
-              backgroundColor: colors.background,
-            },
-          ]}
-        />
+      <ThemedView style={styles.inputGroup}>
         <ThemedText type="small" themeColor="textSecondary">
-          €
+          Normal
         </ThemedText>
+        <ThemedView style={styles.inputWrap}>
+          <TextInput
+            value={text}
+            onChangeText={setText}
+            onEndEditing={handleEndEditing}
+            onBlur={handleEndEditing}
+            keyboardType="decimal-pad"
+            inputMode="decimal"
+            selectTextOnFocus
+            accessibilityLabel={`Preis für ${product.name}`}
+            style={[
+              styles.input,
+              {
+                color: colors.text,
+                borderColor: invalid ? '#E03131' : colors.backgroundSelected,
+                backgroundColor: colors.background,
+              },
+            ]}
+          />
+          <ThemedText type="small" themeColor="textSecondary">
+            €
+          </ThemedText>
+        </ThemedView>
+      </ThemedView>
+      <ThemedView style={styles.inputGroup}>
+        <ThemedText type="small" themeColor="textSecondary">
+          MA
+        </ThemedText>
+        <ThemedView style={styles.inputWrap}>
+          <TextInput
+            value={staffText}
+            onChangeText={setStaffText}
+            onEndEditing={handleStaffEndEditing}
+            onBlur={handleStaffEndEditing}
+            keyboardType="decimal-pad"
+            inputMode="decimal"
+            selectTextOnFocus
+            placeholder="–"
+            placeholderTextColor={colors.textSecondary}
+            accessibilityLabel={`Mitarbeiterpreis für ${product.name}`}
+            style={[
+              styles.input,
+              {
+                color: colors.text,
+                borderColor: staffInvalid
+                  ? '#E03131'
+                  : colors.backgroundSelected,
+                backgroundColor: colors.background,
+              },
+            ]}
+          />
+          <ThemedText type="small" themeColor="textSecondary">
+            €
+          </ThemedText>
+        </ThemedView>
       </ThemedView>
       <Pressable
         onPress={() =>
-          Alert.alert(
+          confirmDialog(
             'Produkt löschen?',
             `${product.name} wirklich aus der Kasse entfernen?`,
-            [
-              { text: 'Abbrechen', style: 'cancel' },
-              {
-                text: 'Löschen',
-                style: 'destructive',
-                onPress: () => removeProduct(product.id),
-              },
-            ],
+            () => removeProduct(product.id),
+            'Löschen',
+            true,
           )
         }
         style={styles.deleteButton}
@@ -123,11 +187,11 @@ function NewProductForm({ categories }: { categories: string[] }) {
   const handleAdd = () => {
     const cents = parseEuroToCents(price);
     if (!name.trim()) {
-      Alert.alert('Name fehlt', 'Bitte einen Produktnamen eingeben.');
+      alertMessage('Name fehlt', 'Bitte einen Produktnamen eingeben.');
       return;
     }
     if (cents === null) {
-      Alert.alert(
+      alertMessage(
         'Preis ungültig',
         'Bitte einen gültigen Preis eingeben, z. B. 3,50.',
       );
@@ -293,13 +357,17 @@ const styles = StyleSheet.create({
   rowInfo: {
     flex: 1,
   },
+  inputGroup: {
+    alignItems: 'center',
+    gap: 2,
+  },
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.one,
   },
   input: {
-    width: 96,
+    width: 72,
     height: 48,
     borderWidth: 1,
     borderRadius: Spacing.two,
