@@ -29,8 +29,22 @@ function centsToInput(cents: number): string {
   return (cents / 100).toFixed(2).replace('.', ',');
 }
 
-function PriceRow({ product }: { product: Product }) {
-  const { updatePrice, updateStaffPrice, removeProduct } = useKasse();
+function PriceRow({
+  product,
+  flohmarkt = false,
+}: {
+  product: Product;
+  flohmarkt?: boolean;
+}) {
+  const {
+    updatePrice,
+    updateStaffPrice,
+    removeProduct,
+    updateFmPrice,
+    removeFmProduct,
+  } = useKasse();
+  const savePrice = flohmarkt ? updateFmPrice : updatePrice;
+  const remove = flohmarkt ? removeFmProduct : removeProduct;
   const scheme = useColorScheme();
   const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
   const [text, setText] = useState(centsToInput(product.priceCents));
@@ -49,7 +63,7 @@ function PriceRow({ product }: { product: Product }) {
     }
     setInvalid(false);
     setText(centsToInput(cents));
-    if (cents !== product.priceCents) updatePrice(product.id, cents);
+    if (cents !== product.priceCents) savePrice(product.id, cents);
   };
 
   const handleStaffEndEditing = () => {
@@ -84,13 +98,14 @@ function PriceRow({ product }: { product: Product }) {
         <ThemedText type="smallBold">{product.name}</ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
           {product.category} · aktuell {formatEuro(product.priceCents)}
-          {product.staffPriceCents != null &&
+          {!flohmarkt &&
+            product.staffPriceCents != null &&
             ` · MA ${formatEuro(product.staffPriceCents)}`}
         </ThemedText>
       </ThemedView>
       <ThemedView style={styles.inputGroup}>
         <ThemedText type="small" themeColor="textSecondary">
-          Normal
+          {flohmarkt ? 'Preis' : 'Normal'}
         </ThemedText>
         <ThemedView style={styles.inputWrap}>
           <TextInput
@@ -116,10 +131,11 @@ function PriceRow({ product }: { product: Product }) {
           </ThemedText>
         </ThemedView>
       </ThemedView>
-      <ThemedView style={styles.inputGroup}>
-        <ThemedText type="small" themeColor="textSecondary">
-          MA
-        </ThemedText>
+      {!flohmarkt && (
+        <ThemedView style={styles.inputGroup}>
+          <ThemedText type="small" themeColor="textSecondary">
+            MA
+          </ThemedText>
         <ThemedView style={styles.inputWrap}>
           <TextInput
             value={staffText}
@@ -143,17 +159,18 @@ function PriceRow({ product }: { product: Product }) {
               },
             ]}
           />
-          <ThemedText type="small" themeColor="textSecondary">
-            €
-          </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              €
+            </ThemedText>
+          </ThemedView>
         </ThemedView>
-      </ThemedView>
+      )}
       <Pressable
         onPress={() =>
           confirmDialog(
             'Produkt löschen?',
-            `${product.name} wirklich aus der Kasse entfernen?`,
-            () => removeProduct(product.id),
+            `${product.name} wirklich entfernen?`,
+            () => remove(product.id),
             'Löschen',
             true,
           )
@@ -168,8 +185,14 @@ function PriceRow({ product }: { product: Product }) {
   );
 }
 
-function NewProductForm({ categories }: { categories: string[] }) {
-  const { addProduct } = useKasse();
+function NewProductForm({
+  categories,
+  flohmarkt = false,
+}: {
+  categories: string[];
+  flohmarkt?: boolean;
+}) {
+  const { addProduct, addFmProduct } = useKasse();
   const scheme = useColorScheme();
   const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
   const [open, setOpen] = useState(false);
@@ -197,7 +220,11 @@ function NewProductForm({ categories }: { categories: string[] }) {
       );
       return;
     }
-    addProduct(name, category || 'Sonstiges', cents);
+    (flohmarkt ? addFmProduct : addProduct)(
+      name,
+      category || 'Sonstiges',
+      cents,
+    );
     reset();
   };
 
@@ -217,7 +244,7 @@ function NewProductForm({ categories }: { categories: string[] }) {
         style={styles.addButton}
         accessibilityLabel="Neues Produkt hinzufügen">
         <ThemedText type="smallBold" style={styles.addButtonText}>
-          + Neues Produkt
+          {flohmarkt ? '+ Neues Flohmarkt-Produkt' : '+ Neues Produkt'}
         </ThemedText>
       </Pressable>
     );
@@ -225,7 +252,9 @@ function NewProductForm({ categories }: { categories: string[] }) {
 
   return (
     <ThemedView type="backgroundElement" style={styles.form}>
-      <ThemedText type="smallBold">Neues Produkt</ThemedText>
+      <ThemedText type="smallBold">
+        {flohmarkt ? 'Neues Flohmarkt-Produkt' : 'Neues Produkt'}
+      </ThemedText>
       <TextInput
         value={name}
         onChangeText={setName}
@@ -286,8 +315,11 @@ function NewProductForm({ categories }: { categories: string[] }) {
 }
 
 export default function SettingsScreen() {
-  const { products } = useKasse();
+  const { products, flohmarktProducts } = useKasse();
   const categories = [...new Set(products.map((p) => p.category))];
+  const fmCategories = [
+    ...new Set(flohmarktProducts.map((p) => p.category)),
+  ];
 
   return (
     <ThemedView style={styles.container}>
@@ -318,6 +350,34 @@ export default function SettingsScreen() {
           <ThemedView style={styles.newProductSection}>
             <NewProductForm categories={categories} />
           </ThemedView>
+
+          <ThemedView style={styles.flohmarktHeader}>
+            <ThemedText type="subtitle">Flohmarkt</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Eigenes Sortiment für die Flohmarkt-Kasse — ohne
+              Mitarbeiterpreise.
+            </ThemedText>
+          </ThemedView>
+          {fmCategories.map((category) => (
+            <ThemedView key={category} style={styles.categorySection}>
+              <ThemedText
+                type="smallBold"
+                themeColor="textSecondary"
+                style={styles.categoryTitle}>
+                {category.toUpperCase()}
+              </ThemedText>
+              <ThemedView style={styles.categoryRows}>
+                {flohmarktProducts
+                  .filter((p) => p.category === category)
+                  .map((p) => (
+                    <PriceRow key={p.id} product={p} flohmarkt />
+                  ))}
+              </ThemedView>
+            </ThemedView>
+          ))}
+          <ThemedView style={styles.newProductSection}>
+            <NewProductForm categories={fmCategories} flohmarkt />
+          </ThemedView>
         </ScrollView>
       </SafeAreaView>
     </ThemedView>
@@ -339,6 +399,10 @@ const styles = StyleSheet.create({
   },
   categorySection: {
     marginTop: Spacing.three,
+  },
+  flohmarktHeader: {
+    marginTop: Spacing.five,
+    gap: Spacing.one,
   },
   categoryTitle: {
     marginBottom: Spacing.one,

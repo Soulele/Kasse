@@ -30,6 +30,9 @@ export default function AppTabs() {
           <TabTrigger name="home" href="/" asChild>
             <TabButton>Kasse</TabButton>
           </TabTrigger>
+          <TabTrigger name="flohmarkt" href="/flohmarkt" asChild>
+            <TabButton>Flohmarkt</TabButton>
+          </TabTrigger>
           <TabTrigger name="today" href="/today" asChild>
             <TabButton>Heute</TabButton>
           </TabTrigger>

@@ -344,9 +344,13 @@ const styles = StyleSheet.create({
   productName: {
     color: '#FFFFFF',
     textAlign: 'center',
+    fontSize: 18,
+    fontWeight: '800',
   },
   productPrice: {
     color: '#FFE8D9',
+    fontSize: 15,
+    fontWeight: '600',
   },
   orderPanel: {
     maxHeight: '46%',
