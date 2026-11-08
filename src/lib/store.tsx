@@ -38,11 +38,14 @@ export type Sale = {
   totalCents: number;
   /** True if the sale used employee prices. */
   staffSale?: boolean;
+  /** True if the sale was made on the flea-market register. */
+  flohmarkt?: boolean;
   /** Set when the sale was cancelled (Storno). */
   voidedAt?: string;
 };
 
 const PRODUCTS_KEY = 'kasse/products';
+const FLOHMARKT_PRODUCTS_KEY = 'kasse/flohmarkt-products';
 const SALES_KEY = 'kasse/sales';
 const CASH_START_KEY = 'kasse/cash-start';
 
@@ -86,6 +89,18 @@ export const DEFAULT_PRODUCTS: Product[] = [
   { id: 'bier', name: 'Bier', category: 'Getränke', priceCents: 300 },
 ];
 
+/** Smaller assortment for the flea-market register (no staff prices). */
+export const DEFAULT_FLOHMARKT_PRODUCTS: Product[] = [
+  { id: 'fm-pommes', name: 'Pommes', category: 'Essen', priceCents: 300 },
+  {
+    id: 'fm-currywurst',
+    name: 'Currywurst',
+    category: 'Essen',
+    priceCents: 350,
+  },
+  { id: 'fm-cola', name: 'Cola', category: 'Getränke', priceCents: 250 },
+];
+
 export function formatEuro(cents: number): string {
   return (cents / 100).toLocaleString('de-DE', {
     style: 'currency',
@@ -114,17 +129,40 @@ type KasseContextValue = {
   removeProduct: (productId: string) => void;
   completeSale: () => Sale | null;
   voidSale: (saleId: string) => void;
+  /** Permanently deletes ALL sales (evening reset, frees storage). */
+  clearAllSales: () => void;
   cashStart: CashStart | null;
   setCashStart: (cents: number) => void;
   todaysSales: Sale[];
   todaysTotalCents: number;
+  /** Flea-market register: separate small assortment and own cart. */
+  flohmarktProducts: Product[];
+  fmOrder: OrderLine[];
+  fmTotalCents: number;
+  addToFmOrder: (productId: string) => void;
+  changeFmQuantity: (productId: string, delta: number) => void;
+  removeFromFmOrder: (productId: string) => void;
+  clearFmOrder: () => void;
+  updateFmPrice: (productId: string, priceCents: number) => void;
+  addFmProduct: (
+    name: string,
+    category: string,
+    priceCents: number,
+  ) => void;
+  removeFmProduct: (productId: string) => void;
+  completeFmSale: () => Sale | null;
+  todaysFmTotalCents: number;
 };
 
 const KasseContext = createContext<KasseContextValue | null>(null);
 
 export function KasseProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<Product[]>(DEFAULT_PRODUCTS);
+  const [flohmarktProducts, setFlohmarktProducts] = useState<Product[]>(
+    DEFAULT_FLOHMARKT_PRODUCTS,
+  );
   const [order, setOrder] = useState<OrderLine[]>([]);
+  const [fmOrder, setFmOrder] = useState<OrderLine[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [cashStart, setCashStartState] = useState<CashStart | null>(null);
   const [staffMode, setStaffMode] = useState(false);
@@ -133,12 +171,15 @@ export function KasseProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const [productsJson, salesJson, cashJson] = await Promise.all([
-          AsyncStorage.getItem(PRODUCTS_KEY),
-          AsyncStorage.getItem(SALES_KEY),
-          AsyncStorage.getItem(CASH_START_KEY),
-        ]);
+        const [productsJson, fmJson, salesJson, cashJson] =
+          await Promise.all([
+            AsyncStorage.getItem(PRODUCTS_KEY),
+            AsyncStorage.getItem(FLOHMARKT_PRODUCTS_KEY),
+            AsyncStorage.getItem(SALES_KEY),
+            AsyncStorage.getItem(CASH_START_KEY),
+          ]);
         if (productsJson) setProducts(JSON.parse(productsJson));
+        if (fmJson) setFlohmarktProducts(JSON.parse(fmJson));
         if (salesJson) setSales(JSON.parse(salesJson));
         if (cashJson) setCashStartState(JSON.parse(cashJson));
       } catch (e) {
@@ -153,6 +194,13 @@ export function KasseProvider({ children }: { children: ReactNode }) {
     setProducts(next);
     AsyncStorage.setItem(PRODUCTS_KEY, JSON.stringify(next)).catch((e) =>
       console.warn('Kasse: could not save products', e),
+    );
+  }, []);
+
+  const persistFlohmarktProducts = useCallback((next: Product[]) => {
+    setFlohmarktProducts(next);
+    AsyncStorage.setItem(FLOHMARKT_PRODUCTS_KEY, JSON.stringify(next)).catch(
+      (e) => console.warn('Kasse: could not save flohmarkt products', e),
     );
   }, []);
 
@@ -244,9 +292,96 @@ export function KasseProvider({ children }: { children: ReactNode }) {
     [products, persistProducts],
   );
 
+  const addToFmOrder = useCallback((productId: string) => {
+    setFmOrder((prev) => {
+      const existing = prev.find((l) => l.productId === productId);
+      if (existing) {
+        return prev.map((l) =>
+          l.productId === productId ? { ...l, quantity: l.quantity + 1 } : l,
+        );
+      }
+      return [...prev, { productId, quantity: 1 }];
+    });
+  }, []);
+
+  const changeFmQuantity = useCallback(
+    (productId: string, delta: number) => {
+      setFmOrder((prev) =>
+        prev
+          .map((l) =>
+            l.productId === productId
+              ? { ...l, quantity: l.quantity + delta }
+              : l,
+          )
+          .filter((l) => l.quantity > 0),
+      );
+    },
+    [],
+  );
+
+  const removeFromFmOrder = useCallback((productId: string) => {
+    setFmOrder((prev) => prev.filter((l) => l.productId !== productId));
+  }, []);
+
+  const clearFmOrder = useCallback(() => {
+    setFmOrder([]);
+  }, []);
+
+  const updateFmPrice = useCallback(
+    (productId: string, priceCents: number) => {
+      persistFlohmarktProducts(
+        flohmarktProducts.map((p) =>
+          p.id === productId ? { ...p, priceCents } : p,
+        ),
+      );
+    },
+    [flohmarktProducts, persistFlohmarktProducts],
+  );
+
+  const addFmProduct = useCallback(
+    (name: string, category: string, priceCents: number) => {
+      const trimmed = name.trim();
+      const trimmedCategory = category.trim() || 'Sonstiges';
+      if (!trimmed) return;
+      const id = `fm-${trimmed
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
+      persistFlohmarktProducts([
+        ...flohmarktProducts,
+        { id, name: trimmed, category: trimmedCategory, priceCents },
+      ]);
+    },
+    [flohmarktProducts, persistFlohmarktProducts],
+  );
+
+  const removeFmProduct = useCallback(
+    (productId: string) => {
+      persistFlohmarktProducts(
+        flohmarktProducts.filter((p) => p.id !== productId),
+      );
+      setFmOrder((prev) => prev.filter((l) => l.productId !== productId));
+    },
+    [flohmarktProducts, persistFlohmarktProducts],
+  );
+
   const productById = useMemo(
     () => new Map(products.map((p) => [p.id, p])),
     [products],
+  );
+
+  const fmProductById = useMemo(
+    () => new Map(flohmarktProducts.map((p) => [p.id, p])),
+    [flohmarktProducts],
+  );
+
+  const fmTotalCents = useMemo(
+    () =>
+      fmOrder.reduce((sum, l) => {
+        const p = fmProductById.get(l.productId);
+        if (!p) return sum;
+        return sum + p.priceCents * l.quantity;
+      }, 0),
+    [fmOrder, fmProductById],
   );
 
   const totalCents = useMemo(
@@ -284,6 +419,10 @@ export function KasseProvider({ children }: { children: ReactNode }) {
     [sales, persistSales],
   );
 
+  const clearAllSales = useCallback(() => {
+    persistSales([]);
+  }, [persistSales]);
+
   const todaysSales = useMemo(
     () => sales.filter((s) => isToday(s.completedAt)),
     [sales],
@@ -292,7 +431,16 @@ export function KasseProvider({ children }: { children: ReactNode }) {
   const todaysTotalCents = useMemo(
     () =>
       todaysSales.reduce(
-        (sum, s) => sum + (s.voidedAt ? 0 : s.totalCents),
+        (sum, s) => sum + (s.voidedAt || s.flohmarkt ? 0 : s.totalCents),
+        0,
+      ),
+    [todaysSales],
+  );
+
+  const todaysFmTotalCents = useMemo(
+    () =>
+      todaysSales.reduce(
+        (sum, s) => sum + (s.voidedAt || !s.flohmarkt ? 0 : s.totalCents),
         0,
       ),
     [todaysSales],
@@ -332,6 +480,35 @@ export function KasseProvider({ children }: { children: ReactNode }) {
     return sale;
   }, [order, products, sales, persistSales, staffMode]);
 
+  const completeFmSale = useCallback((): Sale | null => {
+    if (fmOrder.length === 0) return null;
+    const lines: SaleLine[] = fmOrder
+      .map((l) => {
+        const product = flohmarktProducts.find((p) => p.id === l.productId);
+        if (!product) return null;
+        return {
+          productId: product.id,
+          name: product.name,
+          unitPriceCents: product.priceCents,
+          quantity: l.quantity,
+        };
+      })
+      .filter((l): l is SaleLine => l !== null);
+    const sale: Sale = {
+      id: `${Date.now()}`,
+      completedAt: new Date().toISOString(),
+      lines,
+      flohmarkt: true,
+      totalCents: lines.reduce(
+        (sum, l) => sum + l.unitPriceCents * l.quantity,
+        0,
+      ),
+    };
+    persistSales([...sales, sale]);
+    setFmOrder([]);
+    return sale;
+  }, [fmOrder, flohmarktProducts, sales, persistSales]);
+
   const value = useMemo(
     () => ({
       products,
@@ -351,10 +528,23 @@ export function KasseProvider({ children }: { children: ReactNode }) {
       removeProduct,
       completeSale,
       voidSale,
+      clearAllSales,
       cashStart,
       setCashStart,
       todaysSales,
       todaysTotalCents,
+      flohmarktProducts,
+      fmOrder,
+      fmTotalCents,
+      addToFmOrder,
+      changeFmQuantity,
+      removeFromFmOrder,
+      clearFmOrder,
+      updateFmPrice,
+      addFmProduct,
+      removeFmProduct,
+      completeFmSale,
+      todaysFmTotalCents,
     }),
     [
       products,
@@ -374,10 +564,23 @@ export function KasseProvider({ children }: { children: ReactNode }) {
       removeProduct,
       completeSale,
       voidSale,
+      clearAllSales,
       cashStart,
       setCashStart,
       todaysSales,
       todaysTotalCents,
+      flohmarktProducts,
+      fmOrder,
+      fmTotalCents,
+      addToFmOrder,
+      changeFmQuantity,
+      removeFromFmOrder,
+      clearFmOrder,
+      updateFmPrice,
+      addFmProduct,
+      removeFmProduct,
+      completeFmSale,
+      todaysFmTotalCents,
     ],
   );
 

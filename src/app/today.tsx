@@ -43,7 +43,8 @@ function SaleRow({ sale }: { sale: Sale }) {
     <ThemedView type="backgroundElement" style={styles.saleRow}>
       <ThemedView style={styles.saleRowInfo}>
         <ThemedText type="smallBold" style={voided && styles.voidedText}>
-          {time} Uhr{sale.staffSale ? ' · MA' : ''}
+          {time} Uhr{sale.flohmarkt ? ' · FM' : ''}
+          {sale.staffSale ? ' · MA' : ''}
           {voided ? ' · STORNIERT' : ''}
         </ThemedText>
         <ThemedText
@@ -114,6 +115,8 @@ export default function TodayScreen() {
     sales,
     todaysSales,
     todaysTotalCents,
+    todaysFmTotalCents,
+    clearAllSales,
   } = useKasse();
   const scheme = useColorScheme();
   const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
@@ -122,7 +125,12 @@ export default function TodayScreen() {
 
   const todayKey = dateKey(new Date());
   const startIsToday = cashStart?.date === todayKey;
-  const todaySalesActive = todaysSales.filter((s) => !s.voidedAt);
+  const todaySalesActive = todaysSales.filter(
+    (s) => !s.voidedAt && !s.flohmarkt,
+  );
+  const todayFmSalesActive = todaysSales.filter(
+    (s) => !s.voidedAt && s.flohmarkt,
+  );
 
   const pastDays = [...new Set(
     sales
@@ -213,6 +221,22 @@ export default function TodayScreen() {
             </ThemedText>
           </ThemedView>
 
+          {todayFmSalesActive.length > 0 && (
+            <ThemedView type="backgroundElement" style={styles.card}>
+              <ThemedText type="smallBold" themeColor="textSecondary">
+                FLOHMARKT-UMSATZ
+              </ThemedText>
+              <ThemedText type="title" style={styles.revenueValue}>
+                {formatEuro(todaysFmTotalCents)}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {todayFmSalesActive.length}{' '}
+                {todayFmSalesActive.length === 1 ? 'Verkauf' : 'Verkäufe'}{' '}
+                · eigene Kasse, zählt nicht zum Soll-Bestand
+              </ThemedText>
+            </ThemedView>
+          )}
+
           <ThemedView type="backgroundElement" style={styles.card}>
             <ThemedText type="smallBold" themeColor="textSecondary">
               SOLL-BESTAND IN DER KASSE
@@ -264,6 +288,25 @@ export default function TodayScreen() {
               ))}
             </>
           )}
+
+          {sales.length > 0 && (
+            <Pressable
+              onPress={() =>
+                confirmDialog(
+                  'Tag abschließen?',
+                  'ALLE Verkäufe (auch vergangene Tage) werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden.',
+                  () => clearAllSales(),
+                  'Alles löschen',
+                  true,
+                )
+              }
+              style={styles.resetButton}
+              accessibilityLabel="Alle Verkäufe endgültig löschen">
+              <ThemedText type="smallBold" style={styles.resetButtonText}>
+                Abend-Reset — Alle Verkäufe löschen
+              </ThemedText>
+            </Pressable>
+          )}
         </ScrollView>
       </SafeAreaView>
     </ThemedView>
@@ -282,6 +325,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingBottom: BottomTabInset + Spacing.two,
     gap: Spacing.two,
+  },
+  resetButton: {
+    marginTop: Spacing.four,
+    marginBottom: Spacing.four,
+    paddingVertical: Spacing.three,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: '#E03131',
+    alignItems: 'center',
+  },
+  resetButtonText: {
+    color: '#E03131',
   },
   scrollContent: {
     gap: Spacing.three,
